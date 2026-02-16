@@ -3,4 +3,7 @@
 
 #include "triggerpins_generic.h"
 
+// Analog input pin for continuous logging
+#define ANALOG_PIN A0
+
 #endif

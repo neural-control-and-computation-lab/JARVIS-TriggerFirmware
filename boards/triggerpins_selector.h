@@ -17,6 +17,8 @@
 #include "triggerpins_arduino_nano.h"
 #elif ARDUINO_AVR_UNO
 #include "triggerpins_arduino_uno.h"
+#elif ARDUINO_UNOR4_MINIMA
+#include "triggerpins_arduino_uno.h"
 #else
 #error "Error: Unknown Board"
 #endif

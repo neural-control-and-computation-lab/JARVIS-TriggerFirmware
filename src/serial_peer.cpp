@@ -45,7 +45,8 @@ uint8_t SerialPeer::handleMessage(uint8_t *msg, size_t len) {
         sendMessage((uint8_t *)type_message, len);
         break;
     case TYPE_SETUP:
-        if (len != LENGTH_SETUP_MESSAGE) {
+        if (len != LENGTH_SETUP_MESSAGE &&
+            len != LENGTH_SETUP_MESSAGE_LEGACY) {
             error_flags |= SERIAL_PEER_ERROR_LENGTH;
             sendTxt((uint8_t *)" test ", 7);
         }
@@ -113,6 +114,11 @@ void SerialPeer::handleSetup(setup_message *msg, size_t len) {
     _setup.pulse_limit = msg->pulse_limit;
     _setup.pulse_hz = msg->pulse_hz;
     _setup.flags = msg->flags;
+    if (len >= LENGTH_SETUP_MESSAGE) {
+        _setup.analog_sample_hz = msg->analog_sample_hz;
+    } else {
+        _setup.analog_sample_hz = 0;
+    }
     _setup_changed = true;
 }
 
@@ -176,4 +182,21 @@ void SerialPeer::sendInputs(uint32_t uptime_us, uint32_t pulse_id,
         calculateCrc((uint8_t *)msg + LENGTH_MSG_HEADER, msg->header.length);
 
     sendMessage((uint8_t *)msg, LENGTH_INPUT_STATE_MESSAGE);
+}
+
+void SerialPeer::sendAnalog(uint32_t uptime_us, uint32_t pulse_id,
+                            uint16_t analog_value) {
+    analog_state_message *msg;
+    msg = (analog_state_message *)this->_buffer;
+
+    msg->analog_value = analog_value;
+    msg->uptime_us = uptime_us;
+    msg->pulse_id = pulse_id;
+
+    msg->header.type = TYPE_ANALOG;
+    msg->header.length = LENGTH_ANALOG_STATE_MESSAGE - LENGTH_MSG_HEADER;
+    msg->header.crc =
+        calculateCrc((uint8_t *)msg + LENGTH_MSG_HEADER, msg->header.length);
+
+    sendMessage((uint8_t *)msg, LENGTH_ANALOG_STATE_MESSAGE);
 }

@@ -7,10 +7,11 @@
 
 #define SERIAL_PEER_MAX_BUFFER_SIZE (0xFF - MIN_LENGTH_ERROR_MESSAGE)
 struct setup_struct_t {
-    uint32_t delay_us;    // delay until first pulse
-    uint32_t pulse_limit; // 0 -> unlimited pulses
-    uint8_t pulse_hz;     // Frequency in herz 1-255; 0 -> OFF
-    uint8_t flags;        // booleans
+    uint32_t delay_us;         // delay until first pulse
+    uint32_t pulse_limit;      // 0 -> unlimited pulses
+    uint8_t pulse_hz;          // Frequency in herz 1-255; 0 -> OFF
+    uint8_t flags;             // booleans
+    uint16_t analog_sample_hz; // analog sample rate in Hz (0 -> default 100)
 };
 typedef struct setup_struct_t SetupStruct;
 #define LENGTH_SETUP_STRUCT sizeof(SetupStruct)
@@ -39,6 +40,8 @@ class SerialPeer {
     void sendMessage(uint8_t *msg, size_t len);
     void sendInputs(uint32_t uptime_us, uint32_t pulse_id,
                     uint8_t inputs_state);
+    void sendAnalog(uint32_t uptime_us, uint32_t pulse_id,
+                    uint16_t analog_value);
     void sendError(uint8_t *msg, uint8_t len);
     void sendTxt(uint8_t *msg, uint8_t len);
     void sendAck();

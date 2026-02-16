@@ -208,6 +208,12 @@ void loop() {
     static uint8_t req_pulse_hz = 0;
     static uint32_t pulse_limit = 0;
 
+#ifdef ANALOG_PIN
+#define DEFAULT_ANALOG_SAMPLE_HZ 100
+    static uint32_t analog_timer_last_us = 0;
+    static uint16_t analog_sample_hz = DEFAULT_ANALOG_SAMPLE_HZ;
+#endif
+
     // ######################################################### Generate pulses
     //
     //                            ┌─────┐     ┌─────┐     ┌─       ─┐
@@ -273,6 +279,19 @@ void loop() {
                                temp_inputs_state);
     }
 
+    // ##################################################### Analog sampling
+#ifdef ANALOG_PIN
+    if (pulse_hz > 0 && analog_sample_hz > 0) {
+        uint32_t analog_interval_us = SECOUND / analog_sample_hz;
+        if ((uint32_t)(current_us - analog_timer_last_us) >=
+            analog_interval_us) {
+            analog_timer_last_us = current_us;
+            uint16_t analog_value = analogRead(ANALOG_PIN);
+            serial_peer.sendAnalog(current_us, pulse_count, analog_value);
+        }
+    }
+#endif
+
     // Communication
     packet_serial.update();
     // Check for a receive buffer overflow.
@@ -316,6 +335,13 @@ void loop() {
         if (setup_struct.flags & RESET_COUNTER) {
             pulse_count = RESET_PULSE_COUNT;
         }
+
+#ifdef ANALOG_PIN
+        if (setup_struct.analog_sample_hz > 0) {
+            analog_sample_hz = setup_struct.analog_sample_hz;
+        }
+        analog_timer_last_us = current_us;
+#endif
     }
     if (pulse_hz == 0) {
         pulse_hz = req_pulse_hz;

@@ -13,11 +13,13 @@ enum message_type {
     TYPE_ACK,
     TYPE_TXT,
     TYPE_ERROR,
+    TYPE_ANALOG,
 };
 
 enum setup_flags {
     RESET_COUNTER = 1 << 0,
     SYNC_RISING_EDGE = 1 << 1,
+    ENABLE_ANALOG = 1 << 2,
 };
 
 // +-------+-------+-------+-------+
@@ -66,6 +68,24 @@ typedef struct input_state_message_t input_state_message;
 #define LENGTH_INPUT_STATE_MESSAGE sizeof(input_state_message)
 
 // +-------+-------+-------+-------+
+// |         header        | a_val |
+// +-------+-------+-------+-------+
+// |  a_val|      uptime_us        |
+// +-------+-------+-------+-------+
+// |   ... |       pulse_id        |
+// +-------+-------+-------+-------+
+// |          ...          |
+// +-------+-------+-------+
+struct analog_state_message_t {
+    msg_header header;
+    uint16_t analog_value;
+    uint32_t uptime_us;
+    uint32_t pulse_id;
+};
+typedef struct analog_state_message_t analog_state_message;
+#define LENGTH_ANALOG_STATE_MESSAGE sizeof(analog_state_message)
+
+// +-------+-------+-------+-------+
 // |         header        | pe_hz |
 // +-------+-------+-------+-------+
 // |          pulse_limit          |
@@ -77,10 +97,12 @@ struct setup_message_t {
     uint8_t pulse_hz;     // Frequency in herz 1-255; 0 -> OFF
     uint32_t pulse_limit; // 0 -> unlimited pulses
     uint32_t delay_us;    // delay until first pulse
-    uint8_t flags;        // booleans see setup_flags
+    uint8_t flags;             // booleans see setup_flags
+    uint16_t analog_sample_hz; // analog sample rate in Hz (0 -> default 100)
 };
 typedef struct setup_message_t setup_message;
 #define LENGTH_SETUP_MESSAGE sizeof(setup_message)
+#define LENGTH_SETUP_MESSAGE_LEGACY (LENGTH_SETUP_MESSAGE - sizeof(uint16_t))
 
 #pragma pack(pop)
 
