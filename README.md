@@ -6,7 +6,7 @@
 
 - Clone the repository with:
 
-      git clone --recursive https://github.com/JARVIS-MoCap/JARVIS-TriggerFirmware.git
+      git clone --recursive https://github.com/neural-control-and-computation-lab/JARVIS-TriggerFirmware.git
 
 - Setup udev rules by running:
 
@@ -22,7 +22,7 @@
 
 - Clone the repository with:
 
-      git clone --recursive https://github.com/JARVIS-MoCap/JARVIS-TriggerFirmware.git
+      git clone --recursive https://github.com/neural-control-and-computation-lab/JARVIS-TriggerFirmware.git
 
 - Make sure you are in the `JARVIS-TriggerFirmware` Directory and run:          
       
