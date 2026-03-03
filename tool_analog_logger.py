@@ -150,8 +150,8 @@ def main():
     acq_tool_was_connected = False
 
     with open(args.output, "w", newline="") as csvfile:
-        writer = csv.writer(csvfile)
-        writer.writerow(["timestamp_us", "pulse_id", "analog_value"])
+        writer = csv.writer(csvfile, delimiter=";")
+        writer.writerow(["uptime_us", "pulse_id", "analog_value"])
 
         print()
         print(f"Proxy ready. Analog data -> {args.output}")

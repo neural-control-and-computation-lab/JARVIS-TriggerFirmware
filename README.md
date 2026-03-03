@@ -48,7 +48,7 @@ The firmware streams analog readings from pin A0 at 100 Hz whenever trigger puls
 
 3. Press Ctrl+C to stop the proxy when done.
 
-The CSV contains columns: `timestamp_us`, `pulse_id`, `analog_value`. Without the proxy running, the acquisition tool works exactly as before.
+The CSV uses semicolons (matching the JARVIS metadata format) and contains columns: `uptime_us;pulse_id;analog_value`. The `uptime_us` and `pulse_id` columns match the `triggerdata.csv` saved by the acquisition tool. Without the proxy running, the acquisition tool works exactly as before.
 
 ## Raspberry Pi Pico
 
