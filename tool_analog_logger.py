@@ -96,6 +96,9 @@ def main():
     )
     args = parser.parse_args()
 
+    # Clean up any stale bind mount from a previous run
+    restore_ttyACM0()
+
     # Verify the Arduino device exists
     if not os.path.exists(args.port):
         print(f"Error: {args.port} not found.")
@@ -267,15 +270,14 @@ def main():
     except serial.SerialException:
         pass
 
-    # Restore /dev/ttyACM0 to real device
-    if swapped:
-        print("Restoring /dev/ttyACM0...")
-        restore_ttyACM0()
-
-    # Cleanup
+    # Close all file descriptors first, then unmount
     ser.close()
     os.close(master_fd)
     os.close(slave_fd)
+
+    if swapped:
+        print("Restoring /dev/ttyACM0...")
+        restore_ttyACM0()
 
     # Remove fallback symlink if it exists
     fallback = "/tmp/jarvis_serial"

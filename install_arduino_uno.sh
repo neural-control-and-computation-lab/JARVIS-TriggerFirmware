@@ -5,6 +5,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 export PLATFORMIO_CORE_DIR="PlatformIO/install"
 
+# --- Clean up any broken symlinks from previous installs ---
+if [ -L /dev/ttyACM0 ]; then
+  echo "Removing stale /dev/ttyACM0 symlink..."
+  sudo rm -f /dev/ttyACM0
+  echo "Please unplug and replug the Arduino, then re-run this script."
+  exit 0
+fi
+
 PIO_DIR="PlatformIO/install/"
 if ! [ -d "$PIO_DIR" ]; then
   python3 PlatformIO/platformio-core-installer/get-platformio.py
