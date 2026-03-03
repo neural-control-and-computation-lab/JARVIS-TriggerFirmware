@@ -35,12 +35,31 @@
 
 ## Analog Input Logging
 
-The firmware automatically streams analog readings from pin A0 at 100 Hz whenever camera trigger pulses are active. To record this data, run the included Python logger alongside your acquisition:
+The firmware automatically streams analog readings from pin A0 at 100 Hz whenever camera trigger pulses are active. A Python proxy script filters the analog data into a CSV file while transparently forwarding all other traffic to the JARVIS acquisition tool. No extra hardware is needed.
 
-    pip install pyserial cobs
-    python tool_analog_logger.py --port /dev/ttyACM0 --output analog_log.csv
+### How It Works
 
-The logger passively listens on the serial port and writes a CSV with columns: `timestamp_us`, `pulse_id`, `analog_value`. Press Ctrl+C to stop. No changes to your existing acquisition workflow are needed — just run the logger in a separate terminal.
+    Arduino UNO --USB--> Proxy Script --PTY--> Acquisition Tool
+                            |
+                            +--> analog_log.csv
+
+The proxy opens the real serial port, creates a virtual serial port (PTY), and forwards all normal JARVIS traffic through to the acquisition tool unchanged. Analog messages are intercepted and logged to CSV instead of being forwarded.
+
+### Recording
+
+1. Install dependencies:
+
+        pip install pyserial cobs
+
+2. Start the proxy **before** the acquisition tool:
+
+        python tool_analog_logger.py --port /dev/ttyACM0 --output analog_log.csv
+
+3. The proxy will print the PTY path. Point the acquisition tool at `/tmp/jarvis_serial` (or the path shown).
+
+4. Start your acquisition as normal. The proxy is transparent to the acquisition tool.
+
+5. Press Ctrl+C to stop the proxy when done. The CSV contains columns: `timestamp_us`, `pulse_id`, `analog_value`.
 
 ## Raspberry Pi Pico:
 If you encounter a error regarding missing `libhidapi-hidraw0` install it with:
