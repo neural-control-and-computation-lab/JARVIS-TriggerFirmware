@@ -26,15 +26,25 @@ import os
 import select
 import signal
 import struct
-import sys
 import time
 
 import serial
 from cobs import cobs
 
 BAUDRATE = 115200
+TYPE_SETUP = 1
 TYPE_ANALOG = 6
 PTY_SYMLINK = "/tmp/jarvis_serial"
+
+
+def build_stop_command():
+    """Build a COBS-encoded setup message with pulse_hz=0 to stop the Arduino."""
+    # Legacy setup: header(3) + pulse_hz(1) + pulse_limit(4) + delay_us(4) + flags(1)
+    payload = struct.pack("<BIIB", 0, 0, 0, 0)  # pulse_hz, pulse_limit, delay_us, flags
+    crc = sum(payload) & 0xFF
+    header = struct.pack("<BBB", TYPE_SETUP, len(payload), crc)
+    raw = header + payload
+    return cobs.encode(raw) + b"\x00"
 
 
 def main():
@@ -83,10 +93,14 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     sample_count = 0
-    start_time = time.time()
+    rate_window_start = time.time()
+    rate_window_count = 0
 
     # Buffer for accumulating bytes from Arduino
     arduino_buf = bytearray()
+
+    # Track whether acquisition tool has connected/disconnected
+    acq_tool_was_connected = False
 
     with open(args.output, "w", newline="") as csvfile:
         writer = csv.writer(csvfile)
@@ -101,12 +115,16 @@ def main():
         print(f"Point the acquisition tool at: {args.symlink}")
         print(f"Press Ctrl+C to stop.")
 
+        pty_listening = True  # Whether to include PTY in select()
+
         while running:
-            # Wait for data from Arduino or from PTY (acquisition tool)
+            # Build list of file descriptors to monitor
+            read_fds = [ser.fileno()]
+            if pty_listening:
+                read_fds.append(master_fd)
+
             try:
-                readable, _, _ = select.select(
-                    [ser.fileno(), master_fd], [], [], 0.1
-                )
+                readable, _, _ = select.select(read_fds, [], [], 0.1)
             except (ValueError, OSError):
                 break
 
@@ -130,8 +148,6 @@ def main():
                         arduino_buf = arduino_buf[idx + 1 :]
 
                         if not frame:
-                            # Empty frame (consecutive delimiters), forward
-                            os.write(master_fd, b"\x00")
                             continue
 
                         # Decode COBS to inspect message type
@@ -139,7 +155,10 @@ def main():
                             decoded = cobs.decode(frame)
                         except cobs.DecodeError:
                             # Forward malformed frames as-is
-                            os.write(master_fd, frame + b"\x00")
+                            try:
+                                os.write(master_fd, frame + b"\x00")
+                            except OSError:
+                                pass
                             continue
 
                         if len(decoded) >= 1 and decoded[0] == TYPE_ANALOG:
@@ -154,15 +173,19 @@ def main():
                                     [uptime_us, pulse_id, analog_value]
                                 )
                                 sample_count += 1
+                                rate_window_count += 1
 
                                 if sample_count % 100 == 0:
                                     csvfile.flush()
-                                    elapsed = time.time() - start_time
+                                    now = time.time()
+                                    window = now - rate_window_start
                                     rate = (
-                                        sample_count / elapsed
-                                        if elapsed > 0
+                                        rate_window_count / window
+                                        if window > 0
                                         else 0
                                     )
+                                    rate_window_start = now
+                                    rate_window_count = 0
                                     print(
                                         f"  {sample_count} analog samples, "
                                         f"{rate:.1f} samples/sec"
@@ -170,21 +193,46 @@ def main():
                             # Do NOT forward TYPE_ANALOG to acquisition tool
                         else:
                             # Forward all other messages to acquisition tool
-                            os.write(master_fd, frame + b"\x00")
+                            try:
+                                os.write(master_fd, frame + b"\x00")
+                            except OSError:
+                                pass
 
                 elif fd == master_fd:
                     # Data from acquisition tool -> forward to Arduino
                     try:
                         data = os.read(master_fd, 4096)
                     except OSError:
-                        running = False
-                        break
+                        if acq_tool_was_connected:
+                            # Acquisition tool disconnected — stop Arduino
+                            print("\nAcquisition tool disconnected, stopping Arduino...")
+                            try:
+                                ser.write(build_stop_command())
+                                ser.flush()
+                            except serial.SerialException:
+                                pass
+                            acq_tool_was_connected = False
+                        # Stop selecting on PTY until acq tool reconnects
+                        pty_listening = False
+                        continue
                     if data:
+                        acq_tool_was_connected = True
+                        pty_listening = True
                         try:
                             ser.write(data)
                         except serial.SerialException:
                             running = False
                             break
+
+
+    # Send stop command to Arduino so it stops pulsing/streaming
+    print("\nSending stop command to Arduino...")
+    try:
+        ser.write(build_stop_command())
+        ser.flush()
+        time.sleep(0.1)
+    except serial.SerialException:
+        pass
 
     # Cleanup
     ser.close()
@@ -193,7 +241,7 @@ def main():
     if os.path.islink(args.symlink):
         os.remove(args.symlink)
 
-    print(f"\nDone. {sample_count} analog samples logged to {args.output}")
+    print(f"Done. {sample_count} analog samples logged to {args.output}")
 
 
 if __name__ == "__main__":
