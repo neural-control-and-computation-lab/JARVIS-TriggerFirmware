@@ -35,31 +35,35 @@
 
 ## Analog Input Logging
 
-The firmware automatically streams analog readings from pin A0 at 100 Hz whenever camera trigger pulses are active. A Python proxy script filters the analog data into a CSV file while transparently forwarding all other traffic to the JARVIS acquisition tool. No extra hardware is needed.
+The firmware automatically streams analog readings from pin A0 at 100 Hz whenever camera trigger pulses are active. A transparent proxy intercepts the analog data into a CSV file while forwarding all other traffic to the acquisition tool unchanged. No extra hardware or changes to the acquisition tool are needed.
 
 ### How It Works
 
-    Arduino UNO --USB--> Proxy Script --PTY--> Acquisition Tool
-                            |
-                            +--> analog_log.csv
+The install script sets up a udev rule that creates `/dev/ttyJARVIS` as an alias for the Arduino. When the proxy runs, it temporarily redirects `/dev/ttyACM0` to a virtual serial port so the acquisition tool connects through the proxy without any configuration changes.
 
-The proxy opens the real serial port, creates a virtual serial port (PTY), and forwards all normal JARVIS traffic through to the acquisition tool unchanged. Analog messages are intercepted and logged to CSV instead of being forwarded.
+    Arduino (/dev/ttyJARVIS) --> Proxy --> /dev/ttyACM0 (PTY) --> Acquisition Tool
+                                  |
+                                  +--> analog_log.csv
+
+### Setup
+
+Everything is installed automatically by the install script:
+
+    sh install_arduino_uno.sh
+
+After installing, **unplug and replug the Arduino** so the udev rule takes effect.
 
 ### Recording
 
-1. Install dependencies:
+1. Start the proxy **before** the acquisition tool:
 
-        pip install pyserial cobs
+        python tool_analog_logger.py --output analog_log.csv
 
-2. Start the proxy **before** the acquisition tool:
+2. Start the acquisition tool as normal. It connects to `/dev/ttyACM0` automatically — the proxy is fully transparent.
 
-        python tool_analog_logger.py --port /dev/ttyACM0 --output analog_log.csv
+3. Press Ctrl+C to stop the proxy when done. The CSV contains columns: `timestamp_us`, `pulse_id`, `analog_value`.
 
-3. The proxy will print the PTY path. Point the acquisition tool at `/tmp/jarvis_serial` (or the path shown).
-
-4. Start your acquisition as normal. The proxy is transparent to the acquisition tool.
-
-5. Press Ctrl+C to stop the proxy when done. The CSV contains columns: `timestamp_us`, `pulse_id`, `analog_value`.
+Without the proxy running, the acquisition tool works exactly as before — no proxy needed for normal (non-analog) use.
 
 ## Raspberry Pi Pico:
 If you encounter a error regarding missing `libhidapi-hidraw0` install it with:

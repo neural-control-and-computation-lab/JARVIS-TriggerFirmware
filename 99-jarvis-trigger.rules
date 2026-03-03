@@ -1,0 +1,15 @@
+# JARVIS TriggerFirmware - Arduino UNO R3 udev rule
+# Renames the Arduino serial device to /dev/ttyJARVIS and creates
+# /dev/ttyACM0 as a symlink. This allows the analog logging proxy
+# to transparently intercept serial traffic.
+#
+# Without the proxy running, /dev/ttyACM0 -> /dev/ttyJARVIS (normal operation).
+# With the proxy, /dev/ttyACM0 -> PTY (proxy intercepts and filters analog data).
+
+# Arduino UNO R3 (genuine)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2341", ATTRS{idProduct}=="0043", \
+    SYMLINK+="ttyJARVIS", TAG+="jarvis-trigger"
+
+# Arduino UNO R3 (clone with CH340)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="7523", \
+    SYMLINK+="ttyJARVIS", TAG+="jarvis-trigger"

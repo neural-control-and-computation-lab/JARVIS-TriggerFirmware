@@ -3,21 +3,25 @@
 Serial proxy for JARVIS-TriggerFirmware analog logging.
 
 Sits between the Arduino and the JARVIS acquisition tool. Opens the real
-serial port, creates a virtual serial port (PTY), filters TYPE_ANALOG
-messages into a CSV file, and forwards everything else transparently.
+Arduino serial device (/dev/ttyJARVIS), creates a PTY, and swaps
+/dev/ttyACM0 to point to the PTY so the acquisition tool connects through
+the proxy transparently. TYPE_ANALOG messages are filtered to CSV;
+everything else is forwarded unchanged.
 
-    Arduino UNO --USB--> This Proxy --PTY--> Acquisition Tool
-                            |
-                            +--> analog_log.csv
+    Arduino (/dev/ttyJARVIS) --> Proxy --> /dev/ttyACM0 (PTY) --> Acquisition Tool
+                                  |
+                                  +--> analog_log.csv
 
-Requirements:
-    pip install pyserial cobs
+Prerequisites (installed automatically by install_arduino_uno.sh):
+    - udev rule creating /dev/ttyJARVIS
+    - jarvis_serial_swap helper in /usr/local/bin
+    - sudoers entry for jarvis_serial_swap
+    - pip install pyserial cobs
 
 Usage:
-    python tool_analog_logger.py --port /dev/ttyACM0 --output analog_log.csv
+    python tool_analog_logger.py --output analog_log.csv
 
-Then point the acquisition tool at the PTY path printed on startup
-(or use the symlink at /tmp/jarvis_serial).
+Then start the acquisition tool as normal (it connects to /dev/ttyACM0).
 """
 
 import argparse
@@ -26,6 +30,7 @@ import os
 import select
 import signal
 import struct
+import subprocess
 import time
 import tty
 
@@ -35,57 +40,92 @@ from cobs import cobs
 BAUDRATE = 115200
 TYPE_SETUP = 1
 TYPE_ANALOG = 6
-PTY_SYMLINK = "/tmp/jarvis_serial"
+SWAP_HELPER = "/usr/local/bin/jarvis_serial_swap"
+DEFAULT_PORT = "/dev/ttyJARVIS"
 
 
 def build_stop_command():
     """Build a COBS-encoded setup message with pulse_hz=0 to stop the Arduino."""
     # Legacy setup: header(3) + pulse_hz(1) + pulse_limit(4) + delay_us(4) + flags(1)
-    payload = struct.pack("<BIIB", 0, 0, 0, 0)  # pulse_hz, pulse_limit, delay_us, flags
+    payload = struct.pack("<BIIB", 0, 0, 0, 0)
     crc = sum(payload) & 0xFF
     header = struct.pack("<BBB", TYPE_SETUP, len(payload), crc)
     raw = header + payload
     return cobs.encode(raw) + b"\x00"
 
 
+def swap_ttyACM0(pty_path):
+    """Replace /dev/ttyACM0 with a symlink to the PTY."""
+    try:
+        subprocess.run(
+            ["sudo", SWAP_HELPER, "swap", pty_path],
+            check=True, timeout=5,
+        )
+        return True
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
+        print(f"Warning: Could not swap /dev/ttyACM0: {e}")
+        return False
+
+
+def restore_ttyACM0():
+    """Restore /dev/ttyACM0 to point to the real Arduino device."""
+    try:
+        subprocess.run(
+            ["sudo", SWAP_HELPER, "restore"],
+            check=True, timeout=5,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError):
+        print("Warning: Could not restore /dev/ttyACM0. Unplug and replug the Arduino.")
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description="JARVIS Analog Proxy - filters analog data to CSV, "
-        "forwards all other traffic to the acquisition tool via PTY"
+        description="JARVIS Analog Proxy - transparently intercepts analog "
+        "data from the Arduino and logs it to CSV while the acquisition "
+        "tool operates normally."
     )
     parser.add_argument(
         "--port",
-        required=True,
-        help="Serial port of the Arduino (e.g., /dev/ttyACM0)",
+        default=DEFAULT_PORT,
+        help=f"Serial port of the Arduino (default: {DEFAULT_PORT})",
     )
     parser.add_argument(
         "--output",
         default="analog_log.csv",
         help="Output CSV file (default: analog_log.csv)",
     )
-    parser.add_argument(
-        "--symlink",
-        default=PTY_SYMLINK,
-        help=f"Path for PTY symlink (default: {PTY_SYMLINK})",
-    )
     args = parser.parse_args()
 
-    # Create PTY pair and set to raw mode (disables echo, which would
-    # otherwise bounce Arduino frames back through the proxy to the Arduino)
+    # Verify the Arduino device exists
+    if not os.path.exists(args.port):
+        print(f"Error: {args.port} not found.")
+        if args.port == DEFAULT_PORT:
+            print("Make sure the Arduino is plugged in and the udev rule is installed.")
+            print("Run 'sh install_arduino_uno.sh' to set up, then unplug/replug the Arduino.")
+        return 1
+
+    # Create PTY pair and set to raw mode
     master_fd, slave_fd = os.openpty()
     tty.setraw(master_fd)
     tty.setraw(slave_fd)
     slave_name = os.ttyname(slave_fd)
 
-    # Create symlink for easy access
-    if os.path.exists(args.symlink) or os.path.islink(args.symlink):
-        os.remove(args.symlink)
-    os.symlink(slave_name, args.symlink)
-
     # Open real serial port (this resets the Arduino via DTR)
+    print(f"Opening Arduino on {args.port}...")
     ser = serial.Serial(port=args.port, baudrate=BAUDRATE, timeout=0)
     time.sleep(2)  # Wait for Arduino reset
     ser.reset_input_buffer()
+
+    # Swap /dev/ttyACM0 to point to our PTY
+    print(f"Redirecting /dev/ttyACM0 -> {slave_name}...")
+    swapped = swap_ttyACM0(slave_name)
+    if not swapped:
+        print("Falling back: acquisition tool must connect to /tmp/jarvis_serial")
+        # Create fallback symlink
+        fallback = "/tmp/jarvis_serial"
+        if os.path.exists(fallback) or os.path.islink(fallback):
+            os.remove(fallback)
+        os.symlink(slave_name, fallback)
 
     running = True
 
@@ -110,19 +150,13 @@ def main():
         writer = csv.writer(csvfile)
         writer.writerow(["timestamp_us", "pulse_id", "analog_value"])
 
-        print(f"Proxy started:")
-        print(f"  Arduino port: {args.port}")
-        print(f"  PTY device:   {slave_name}")
-        print(f"  Symlink:      {args.symlink}")
-        print(f"  CSV output:   {args.output}")
         print()
-        print(f"Point the acquisition tool at: {args.symlink}")
-        print(f"Press Ctrl+C to stop.")
+        print(f"Proxy ready. Analog data -> {args.output}")
+        print(f"Start the acquisition tool normally. Press Ctrl+C to stop.")
 
-        pty_listening = True  # Whether to include PTY in select()
+        pty_listening = True
 
         while running:
-            # Build list of file descriptors to monitor
             read_fds = [ser.fileno()]
             if pty_listening:
                 read_fds.append(master_fd)
@@ -149,7 +183,7 @@ def main():
                     while b"\x00" in arduino_buf:
                         idx = arduino_buf.index(b"\x00")
                         frame = bytes(arduino_buf[:idx])
-                        arduino_buf = arduino_buf[idx + 1 :]
+                        arduino_buf = arduino_buf[idx + 1:]
 
                         if not frame:
                             continue
@@ -158,7 +192,6 @@ def main():
                         try:
                             decoded = cobs.decode(frame)
                         except cobs.DecodeError:
-                            # Forward malformed frames as-is
                             try:
                                 os.write(master_fd, frame + b"\x00")
                             except OSError:
@@ -166,9 +199,8 @@ def main():
                             continue
 
                         if len(decoded) >= 1 and decoded[0] == TYPE_ANALOG:
-                            # Parse analog message: header(3) + payload(10)
-                            # header: type(1) + length(1) + crc(1)
-                            # payload: analog_value(u16) + uptime_us(u32) + pulse_id(u32)
+                            # Parse analog payload after 3-byte header:
+                            #   analog_value(u16) + uptime_us(u32) + pulse_id(u32)
                             if len(decoded) >= 13:
                                 analog_value, uptime_us, pulse_id = struct.unpack_from(
                                     "<HIL", decoded, 3
@@ -208,7 +240,6 @@ def main():
                         data = os.read(master_fd, 4096)
                     except OSError:
                         if acq_tool_was_connected:
-                            # Acquisition tool disconnected — stop Arduino
                             print("\nAcquisition tool disconnected, stopping Arduino...")
                             try:
                                 ser.write(build_stop_command())
@@ -216,7 +247,6 @@ def main():
                             except serial.SerialException:
                                 pass
                             acq_tool_was_connected = False
-                        # Stop selecting on PTY until acq tool reconnects
                         pty_listening = False
                         continue
                     if data:
@@ -228,8 +258,7 @@ def main():
                             running = False
                             break
 
-
-    # Send stop command to Arduino so it stops pulsing/streaming
+    # Send stop command to Arduino
     print("\nSending stop command to Arduino...")
     try:
         ser.write(build_stop_command())
@@ -238,12 +267,20 @@ def main():
     except serial.SerialException:
         pass
 
+    # Restore /dev/ttyACM0 to real device
+    if swapped:
+        print("Restoring /dev/ttyACM0...")
+        restore_ttyACM0()
+
     # Cleanup
     ser.close()
     os.close(master_fd)
     os.close(slave_fd)
-    if os.path.islink(args.symlink):
-        os.remove(args.symlink)
+
+    # Remove fallback symlink if it exists
+    fallback = "/tmp/jarvis_serial"
+    if os.path.islink(fallback):
+        os.remove(fallback)
 
     print(f"Done. {sample_count} analog samples logged to {args.output}")
 
