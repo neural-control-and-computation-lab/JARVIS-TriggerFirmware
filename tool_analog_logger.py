@@ -27,6 +27,7 @@ import select
 import signal
 import struct
 import time
+import tty
 
 import serial
 from cobs import cobs
@@ -69,8 +70,11 @@ def main():
     )
     args = parser.parse_args()
 
-    # Create PTY pair
+    # Create PTY pair and set to raw mode (disables echo, which would
+    # otherwise bounce Arduino frames back through the proxy to the Arduino)
     master_fd, slave_fd = os.openpty()
+    tty.setraw(master_fd)
+    tty.setraw(slave_fd)
     slave_name = os.ttyname(slave_fd)
 
     # Create symlink for easy access
