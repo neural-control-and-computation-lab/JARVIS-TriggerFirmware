@@ -33,6 +33,15 @@
        reg add "HKLM\SYSTEM\CurrentControlSet\Control\FileSystem" /v LongPathsEnabled /t REG_DWORD /d 1
 
 
+## Analog Input Logging
+
+The firmware automatically streams analog readings from pin A0 at 100 Hz whenever camera trigger pulses are active. To record this data, run the included Python logger alongside your acquisition:
+
+    pip install pyserial cobs
+    python tool_analog_logger.py --port /dev/ttyACM0 --output analog_log.csv
+
+The logger passively listens on the serial port and writes a CSV with columns: `timestamp_us`, `pulse_id`, `analog_value`. Press Ctrl+C to stop. No changes to your existing acquisition workflow are needed — just run the logger in a separate terminal.
+
 ## Raspberry Pi Pico:
 If you encounter a error regarding missing `libhidapi-hidraw0` install it with:
 
