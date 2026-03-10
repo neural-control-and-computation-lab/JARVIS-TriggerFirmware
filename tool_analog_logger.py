@@ -40,6 +40,10 @@ from cobs import cobs
 BAUDRATE = 115200
 TYPE_SETUP = 1
 TYPE_ANALOG = 6
+HEADER_SIZE = 3
+# Legacy setup: header(3) + pulse_hz(1) + pulse_limit(4) + delay_us(4) + flags(1) = 13
+SETUP_MSG_LEGACY_LEN = 13
+DEFAULT_SAMPLE_HZ = 100
 SWAP_HELPER = "/usr/local/bin/jarvis_serial_swap"
 DEFAULT_PORT = "/dev/ttyJARVIS"
 
@@ -52,6 +56,24 @@ def build_stop_command():
     header = struct.pack("<BBB", TYPE_SETUP, len(payload), crc)
     raw = header + payload
     return cobs.encode(raw) + b"\x00"
+
+
+def inject_analog_hz(frame, sample_hz):
+    """If frame is a legacy TYPE_SETUP, extend it with analog_sample_hz.
+
+    Returns the (possibly modified) COBS-encoded frame bytes (without delimiter).
+    """
+    try:
+        decoded = cobs.decode(frame)
+    except cobs.DecodeError:
+        return frame
+    if len(decoded) == SETUP_MSG_LEGACY_LEN and decoded[0] == TYPE_SETUP:
+        # Append analog_sample_hz to payload
+        payload = decoded[HEADER_SIZE:] + struct.pack("<H", sample_hz)
+        crc = sum(payload) & 0xFF
+        header = struct.pack("<BBB", TYPE_SETUP, len(payload), crc)
+        return cobs.encode(header + payload)
+    return frame
 
 
 def swap_ttyACM0(pty_path):
@@ -93,6 +115,12 @@ def main():
         "--output",
         default="analog_log.csv",
         help="Output CSV file (default: analog_log.csv)",
+    )
+    parser.add_argument(
+        "--sample-rate",
+        type=int,
+        default=DEFAULT_SAMPLE_HZ,
+        help=f"Analog sample rate in Hz (default: {DEFAULT_SAMPLE_HZ})",
     )
     args = parser.parse_args()
 
@@ -146,6 +174,9 @@ def main():
     # Buffer for accumulating bytes from Arduino
     arduino_buf = bytearray()
 
+    # Buffer for accumulating bytes from acquisition tool
+    acq_buf = bytearray()
+
     # Track whether acquisition tool has connected/disconnected
     acq_tool_was_connected = False
 
@@ -154,7 +185,7 @@ def main():
         writer.writerow(["uptime_us", "pulse_id", "analog_value"])
 
         print()
-        print(f"Proxy ready. Analog data -> {args.output}")
+        print(f"Proxy ready. Analog data -> {args.output} ({args.sample_rate} Hz)")
         print(f"Start the acquisition tool normally. Press Ctrl+C to stop.")
 
         pty_listening = True
@@ -238,7 +269,7 @@ def main():
                                 pass
 
                 elif fd == master_fd:
-                    # Data from acquisition tool -> forward to Arduino
+                    # Data from acquisition tool -> parse and forward to Arduino
                     try:
                         data = os.read(master_fd, 4096)
                     except OSError:
@@ -255,11 +286,21 @@ def main():
                     if data:
                         acq_tool_was_connected = True
                         pty_listening = True
-                        try:
-                            ser.write(data)
-                        except serial.SerialException:
-                            running = False
-                            break
+                        acq_buf.extend(data)
+
+                        # Process COBS frames to intercept TYPE_SETUP
+                        while b"\x00" in acq_buf:
+                            idx = acq_buf.index(b"\x00")
+                            frame = bytes(acq_buf[:idx])
+                            acq_buf = acq_buf[idx + 1:]
+
+                            if frame:
+                                frame = inject_analog_hz(frame, args.sample_rate)
+                            try:
+                                ser.write(frame + b"\x00")
+                            except serial.SerialException:
+                                running = False
+                                break
 
     # Send stop command to Arduino
     print("\nSending stop command to Arduino...")

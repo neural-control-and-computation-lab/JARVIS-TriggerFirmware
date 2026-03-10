@@ -209,9 +209,8 @@ void loop() {
     static uint32_t pulse_limit = 0;
 
 #ifdef ANALOG_PIN
-#define DEFAULT_ANALOG_SAMPLE_HZ 100
     static uint32_t analog_timer_last_us = 0;
-    static uint16_t analog_sample_hz = DEFAULT_ANALOG_SAMPLE_HZ;
+    static uint16_t analog_sample_hz = 0;
 #endif
 
     // ######################################################### Generate pulses
@@ -337,9 +336,7 @@ void loop() {
         }
 
 #ifdef ANALOG_PIN
-        if (setup_struct.analog_sample_hz > 0) {
-            analog_sample_hz = setup_struct.analog_sample_hz;
-        }
+        analog_sample_hz = setup_struct.analog_sample_hz;
         analog_timer_last_us = current_us;
 #endif
     }
